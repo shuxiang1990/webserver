@@ -2,12 +2,15 @@
 import socket
 import sys
 import StringIO
+import errno
+import os
+import signal
 
 
 class WSGIServer(object):
     address_family = socket.AF_INET
     socket_type = socket.SOCK_STREAM
-    request_queue_size = 1
+    request_queue_size = 1024
 
     def __init__(self, server_address):
 
@@ -24,14 +27,47 @@ class WSGIServer(object):
         self.server_port = port
         self.headers_set = []
 
+
+    def grim_reaper(self, signum, frame):
+
+        while True:
+            try:
+                pid, status = os.waitpid(
+                    -1,  # Wait for any child process
+                    os.WNOHANG  # Do not block and return EWOULDBLOCK error
+                )
+            except OSError:
+                return
+
+            if pid == 0:  # no more zombies
+                return
+
     def serve_forever(self):
+
+        signal.signal(signal.SIGCHLD, self.grim_reaper)
         listen_socket = self.listen_socket
         while True:
-            self.client_connection, client_address = listen_socket.accept()
-            self.handle_one_request()
 
-    def handle_one_request(self):
-        self.request_data = request_data = self.client_connection.recv(1024)
+            try:
+                client_connection, client_address = listen_socket.accept()
+            except IOError, e:
+                code, msg = e.args
+                if code == errno.EINTR:
+                    continue
+                else:
+                    raise
+            pid = os.fork()
+            if pid == 0:
+                listen_socket.close()
+                self.handle_request(client_connection)
+                client_connection.close()
+                os._exit(0)
+            else:
+                client_connection.close()
+
+
+    def handle_request(self, client_connection):
+        self.request_data = request_data = client_connection.recv(1024)
         print (''.join('< {line}\n'.format(line=line) for line in request_data.splitlines()))
 
         # 解析请求的第一行
@@ -44,7 +80,7 @@ class WSGIServer(object):
         result = self.application(env, self.start_response)
 
         # 构造好返回包并响应请求
-        self.finish_response(result)
+        self.finish_response(result, client_connection)
 
     def set_app(self, app):
         self.application = app
@@ -85,7 +121,7 @@ class WSGIServer(object):
         # 根据 wsgi 规范， start_response 必须返回一个 ‘write’ callable，
         # 这里简化处理了
 
-    def finish_response(self, result):
+    def finish_response(self, result, client_connection):
 
         try:
             status, response_headers = self.headers_set
@@ -101,10 +137,10 @@ class WSGIServer(object):
                 '> {line}\n'.format(line=line)
                 for line in response.splitlines()
             ))
-            self.client_connection.sendall(response)
+            client_connection.sendall(response)
 
         finally:
-            self.client_connection.close()
+            client_connection.close()
 
 
 SERVER_ADDRESS = (HOST, PORT) = '', 8888
