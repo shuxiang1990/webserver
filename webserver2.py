@@ -50,7 +50,7 @@ class WSGIServer(object):
 
             try:
                 client_connection, client_address = listen_socket.accept()
-            except IOError, e:
+            except IOError as e:
                 code, msg = e.args
                 if code == errno.EINTR:
                     continue
