@@ -9,6 +9,7 @@
 # TODO
 
 - 完善 webserver
+- 将 tornado 的 io 模型搬过来
 - 整合 eventlet，使之支持高并发
 - 添加路由规则
 
